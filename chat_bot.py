@@ -1,72 +1,48 @@
-import streamlit as st
-from PyPDF2 import PdfReader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-import google.generativeai as palm
-from langchain_community.embeddings import GooglePalmEmbeddings
-# from langchain_community.llms import GooglePalm
-from langchain_google_genai import GoogleGenerativeAI
+import os
+from langchain_google_genai import GoogleGenerativeAIEmbeddings,GoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
-import os
+from utils import load_config
 
-os.environ['GOOGLE_API_KEY'] =  'AIzaSyAv5jmX3j3utT5ewZXAmJEf-ShG3eurDuU'
+# Load the configuration
+cfg = load_config()
+os.environ['GOOGLE_API_KEY'] = cfg.PALLM_API
 
-def get_pdf_text(pdf_docs):
-    text=""
-    for pdf in pdf_docs:
-        pdf_reader= PdfReader(pdf)
-        for page in pdf_reader.pages:
-            text+= page.extract_text()
-    return  text
+# Load FAISS vectorstore from existing database
+def load_vector_store():
+    return FAISS.load_local(cfg.DB_FAISS_PATH, GoogleGenerativeAIEmbeddings(model="models/embedding-001"))
 
-def get_text_chunks(text):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=20)
-    chunks = text_splitter.split_text(text)
-    return chunks
-
-def get_vector_store(text_chunks):
-    embeddings = GooglePalmEmbeddings()
-    vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
-    return vector_store
-
+# Function to get the conversational chain
 def get_conversational_chain(vector_store):
-    llm = GoogleGenerativeAI(model="models/text-bison-001", google_api_key=os.environ['GOOGLE_API_KEY'] , temperature=0.1)
-    memory = ConversationBufferMemory(memory_key = "chat_history", return_messages=True)
+    llm = GoogleGenerativeAI(model="gemini-pro", google_api_key=os.environ['GOOGLE_API_KEY'], temperature=0.1)
+    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     conversation_chain = ConversationalRetrievalChain.from_llm(llm=llm, retriever=vector_store.as_retriever(), memory=memory)
     return conversation_chain
 
-def user_input(user_question):
-    response = st.session_state.conversation({'question': user_question})
-    st.session_state.chatHistory = response['chat_history']
-    for i, message in enumerate(st.session_state.chatHistory):
-        if i%2 == 0:
-            st.write("Human: ", message.content)
+# Simulate user input for interaction
+def user_input(conversation, user_question):
+    response = conversation({'question': user_question})
+    chat_history = response['chat_history']
+    for i, message in enumerate(chat_history):
+        if i % 2 == 0:
+            print("Human:", message.content)
         else:
-            st.write("Bot: ", message.content)
+            print("Bot:", message.content)
+
+# Main entry point for the script
 def main():
-    st.set_page_config("Chat with Multiple PDFs")
-    st.header("Chat with Multiple PDF 💬")
-    user_question = st.text_input("Ask a Question from the PDF Files")
-    if "conversation" not in st.session_state:
-        st.session_state.conversation = None
-    if "chatHistory" not in st.session_state:
-        st.session_state.chatHistory = None
-    if user_question:
-        user_input(user_question)
-    with st.sidebar:
-        st.title("Settings")
-        st.subheader("Upload your Documents")
-        pdf_docs = st.file_uploader("Upload your PDF Files and Click on the Process Button", accept_multiple_files=True)
-        if st.button("Process"):
-            with st.spinner("Processing"):
-                raw_text = get_pdf_text(pdf_docs)
-                text_chunks = get_text_chunks(raw_text)
-                vector_store = get_vector_store(text_chunks)
-                st.session_state.conversation = get_conversational_chain(vector_store)
-                st.success("Done")
+    print("Welcome to PDF Chatbot!")
+    vector_store = load_vector_store()
 
-
+    conversation = get_conversational_chain(vector_store)
+    
+    while True:
+        user_question = input("Ask a question (type 'exit' to quit): ")
+        if user_question.lower() == 'exit':
+            print("Goodbye!")
+            break
+        user_input(conversation, user_question)
 
 if __name__ == "__main__":
     main()
